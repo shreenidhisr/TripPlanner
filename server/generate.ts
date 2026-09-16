@@ -8,6 +8,7 @@ import {
 } from '../shared/heuristicPlan'
 import type { ItineraryDay, TripPlan } from '../shared/types'
 import { draftWithLlm, llmConfigured, llmDraftToIntent } from './llm'
+import { enrichFoodStops } from './places'
 import { enrichWaypoints, routeDrive } from './routing'
 
 function patchDrive(day: ItineraryDay, minutes: number, miles: number): ItineraryDay {
@@ -52,6 +53,43 @@ async function applyOsrmTimes(
   return { days: next, routing: usedOsrm ? 'osrm' : 'estimated' }
 }
 
+async function finishPlan(input: {
+  draft: ReturnType<typeof buildDraftPlan> | {
+    intent: TripPlan['intent']
+    waypoints: Waypoint[]
+    days: ItineraryDay[]
+    title: string
+    subtitle: string
+  }
+  engine: TripPlan['meta']['engine']
+  routing: TripPlan['meta']['routing']
+  model?: string
+  tips?: string[]
+}): Promise<TripPlan> {
+  const { days, placesFound } = await enrichFoodStops(
+    input.draft.days,
+    input.draft.waypoints,
+    input.draft.intent.food,
+  )
+
+  const tips = [...(input.tips ?? [])]
+  if (placesFound > 0) {
+    tips.unshift(`Found real OpenStreetMap food stops for ${placesFound} day${placesFound === 1 ? '' : 's'}.`)
+  }
+
+  return finalizePlan(
+    { ...input.draft, days },
+    {
+      engine: input.engine,
+      routing: input.routing,
+      places: placesFound > 0 ? 'overpass' : 'none',
+      generatedAt: new Date().toISOString(),
+      model: input.model,
+    },
+    tips.length ? { tips: tips.slice(0, 5) } : undefined,
+  )
+}
+
 export async function generatePlan(notes: string): Promise<TripPlan> {
   const text = notes.trim()
   if (text.length < 8) {
@@ -84,8 +122,8 @@ export async function generatePlan(notes: string): Promise<TripPlan> {
         }
 
         const { days, routing } = await applyOsrmTimes(draftDays, waypoints)
-        return finalizePlan(
-          {
+        return finishPlan({
+          draft: {
             intent,
             waypoints,
             days,
@@ -94,14 +132,11 @@ export async function generatePlan(notes: string): Promise<TripPlan> {
               llm.draft.subtitle ||
               `From ${intent.startCity.split(',')[0]} · AI-structured from your notes`,
           },
-          {
-            engine: 'llm',
-            routing,
-            generatedAt: new Date().toISOString(),
-            model: llm.model,
-          },
-          { tips: llm.draft.tips?.length ? llm.draft.tips.slice(0, 4) : undefined },
-        )
+          engine: 'llm',
+          routing,
+          model: llm.model,
+          tips: llm.draft.tips?.length ? llm.draft.tips.slice(0, 4) : undefined,
+        })
       }
     } catch (err) {
       console.warn('[generate] LLM failed, falling back to heuristic:', err)
@@ -112,12 +147,9 @@ export async function generatePlan(notes: string): Promise<TripPlan> {
   const waypoints = await enrichWaypoints(draft.waypoints)
   const { days, routing } = await applyOsrmTimes(draft.days, waypoints)
 
-  return finalizePlan(
-    { ...draft, waypoints, days },
-    {
-      engine: 'heuristic',
-      routing,
-      generatedAt: new Date().toISOString(),
-    },
-  )
+  return finishPlan({
+    draft: { ...draft, waypoints, days },
+    engine: 'heuristic',
+    routing,
+  })
 }

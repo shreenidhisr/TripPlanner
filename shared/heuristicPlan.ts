@@ -345,6 +345,7 @@ export function generateHeuristicPlan(raw: string): TripPlan {
   return finalizePlan(draft, {
     engine: 'heuristic',
     routing: 'estimated',
+    places: 'none',
     generatedAt: new Date().toISOString(),
   })
 }

@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchHealth, generatePlan } from './lib/api'
+import {
+  fetchCloudTrips,
+  fetchHealth,
+  fetchMe,
+  generatePlan,
+  login,
+  logout,
+  register,
+  saveCloudTrip,
+  type AuthUser,
+  type CloudTrip,
+} from './lib/api'
 import {
   clearShareHash,
   encodeShareUrl,
@@ -90,22 +101,42 @@ export default function App() {
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState('Checking routing…')
-  const [saved, setSaved] = useState<SavedTrip[]>(() => listSavedTrips())
+  const [localSaved, setLocalSaved] = useState<SavedTrip[]>(() => listSavedTrips())
+  const [cloudTrips, setCloudTrips] = useState<CloudTrip[]>([])
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [database, setDatabase] = useState(false)
+  const [authOpen, setAuthOpen] = useState(false)
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authName, setAuthName] = useState('')
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [authBusy, setAuthBusy] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const resultsRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
-    void fetchHealth().then((health) => {
+    void (async () => {
+      const [health, me] = await Promise.all([fetchHealth(), fetchMe()])
+      setDatabase(Boolean(health?.database || me.database))
+      setUser(me.user)
       if (!health) {
         setStatus('Offline mode · local planner')
         return
       }
-      setStatus(
-        health.llm
-          ? 'Live routing · AI planning on'
-          : 'Live routing on · add OPENAI_API_KEY for AI planning',
-      )
-    })
+      const bits = ['Live routing']
+      if (health.places) bits.push('OSM places')
+      if (health.database) bits.push('Postgres')
+      bits.push(health.llm ? 'AI on' : 'add OPENAI_API_KEY for AI')
+      setStatus(bits.join(' · '))
+      if (me.user) {
+        try {
+          setCloudTrips(await fetchCloudTrips())
+        } catch {
+          // ignore
+        }
+      }
+    })()
   }, [])
 
   useEffect(() => {
@@ -140,10 +171,21 @@ export default function App() {
     }
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!plan) return
-    setSaved(saveTrip(plan))
-    setToast('Trip saved on this device')
+    setLocalSaved(saveTrip(plan))
+    if (user && database) {
+      try {
+        const trip = await saveCloudTrip(plan)
+        setCloudTrips((prev) => [trip, ...prev.filter((t) => t.planId !== trip.planId)].slice(0, 50))
+        setToast('Saved to PostgreSQL')
+        return
+      } catch (err) {
+        setToast(err instanceof Error ? err.message : 'Cloud save failed · kept local copy')
+        return
+      }
+    }
+    setToast(database ? 'Sign in to save to Postgres' : 'Saved on this device')
   }
 
   async function handleShare() {
@@ -155,6 +197,33 @@ export default function App() {
     } catch {
       setToast(url)
     }
+  }
+
+  async function handleAuthSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setAuthBusy(true)
+    setAuthError(null)
+    try {
+      const next =
+        authMode === 'login'
+          ? await login({ email: authEmail, password: authPassword })
+          : await register({ email: authEmail, password: authPassword, name: authName })
+      setUser(next)
+      setAuthOpen(false)
+      setCloudTrips(await fetchCloudTrips())
+      setToast(authMode === 'login' ? 'Signed in' : 'Account created')
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Auth failed')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function handleLogout() {
+    await logout()
+    setUser(null)
+    setCloudTrips([])
+    setToast('Signed out')
   }
 
   const busy = generating
@@ -169,6 +238,22 @@ export default function App() {
           <span className="status-pill" title="Generation backend status">
             {status}
           </span>
+          {user ? (
+            <button type="button" className="ghost-btn" onClick={() => void handleLogout()}>
+              {user.name || user.email}
+            </button>
+          ) : database ? (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                setAuthMode('login')
+                setAuthOpen(true)
+              }}
+            >
+              Sign in
+            </button>
+          ) : null}
           {plan ? (
             <button
               type="button"
@@ -197,7 +282,8 @@ export default function App() {
             <p className="brand brand--hero">TripPlanner</p>
             <h1>Paste the mess. Drive the plan.</h1>
             <p className="hero__lede">
-              Dump your rough notes—days, vibes, food quirks—and get a day-by-day route with live drive times and map links.
+              Dump your rough notes—days, vibes, food quirks—and get a day-by-day route with live drive times, real food
+              stops, and Postgres-backed saves.
             </p>
 
             <div className={`composer ${busy ? 'composer--busy' : ''}`}>
@@ -249,8 +335,8 @@ export default function App() {
                   <p className="results__sub">{plan.subtitle}</p>
                 </div>
                 <div className="plan-actions">
-                  <button type="button" className="text-btn" onClick={handleSave}>
-                    Save
+                  <button type="button" className="text-btn" onClick={() => void handleSave()}>
+                    {user ? 'Save to Postgres' : 'Save'}
                   </button>
                   <button type="button" className="text-btn" onClick={() => void handleShare()}>
                     Copy share link
@@ -275,6 +361,7 @@ export default function App() {
                   <dd>
                     {plan.meta.engine === 'llm' ? 'AI' : 'Smart parser'}
                     {plan.meta.routing === 'osrm' ? ' · live ETA' : ''}
+                    {plan.meta.places === 'overpass' ? ' · places' : ''}
                   </dd>
                 </div>
               </dl>
@@ -300,11 +387,35 @@ export default function App() {
               </ul>
             </aside>
 
-            {saved.length ? (
+            {cloudTrips.length ? (
+              <aside className="saved">
+                <h3>Saved in PostgreSQL</h3>
+                <ul>
+                  {cloudTrips.slice(0, 6).map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className="saved__item"
+                        onClick={() => {
+                          setPlan(item.plan)
+                          setNotes(item.plan.intent.raw)
+                          setOpenDay(1)
+                        }}
+                      >
+                        <strong>{item.title}</strong>
+                        <span>{new Date(item.updatedAt).toLocaleString()}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+            ) : null}
+
+            {localSaved.length ? (
               <aside className="saved">
                 <h3>Saved on this device</h3>
                 <ul>
-                  {saved.slice(0, 5).map((item) => (
+                  {localSaved.slice(0, 5).map((item) => (
                     <li key={item.plan.id}>
                       <button
                         type="button"
@@ -329,10 +440,61 @@ export default function App() {
 
       <footer className="footer">
         <p>
-          TripPlanner turns unstructured notes into a structured driving itinerary—with live OpenStreetMap drive times
-          {status.includes('AI') ? ' and optional OpenAI planning' : ''}.
+          TripPlanner uses live OpenStreetMap routing, Overpass places, and PostgreSQL for accounts and trip history.
         </p>
       </footer>
+
+      {authOpen ? (
+        <div className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+          <form className="auth-card" onSubmit={(e) => void handleAuthSubmit(e)}>
+            <h2 id="auth-title">{authMode === 'login' ? 'Sign in' : 'Create account'}</h2>
+            <p>Accounts and trips are stored in PostgreSQL.</p>
+            {authMode === 'register' ? (
+              <label>
+                Name
+                <input value={authName} onChange={(e) => setAuthName(e.target.value)} autoComplete="name" />
+              </label>
+            ) : null}
+            <label>
+              Email
+              <input
+                type="email"
+                required
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                autoComplete="email"
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                required
+                minLength={8}
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+              />
+            </label>
+            {authError ? <p className="composer__error">{authError}</p> : null}
+            <div className="auth-actions">
+              <button type="button" className="text-btn" onClick={() => setAuthOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="text-btn"
+                onClick={() => setAuthMode((m) => (m === 'login' ? 'register' : 'login'))}
+              >
+                {authMode === 'login' ? 'Need an account?' : 'Have an account?'}
+              </button>
+              <button type="submit" className="generate" disabled={authBusy}>
+                {authBusy ? 'Working…' : authMode === 'login' ? 'Sign in' : 'Create account'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       {toast ? <div className="toast">{toast}</div> : null}
     </div>

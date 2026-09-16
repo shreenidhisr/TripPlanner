@@ -52,6 +52,7 @@ export type ItineraryDay = {
 export type PlanMeta = {
   engine: 'heuristic' | 'llm'
   routing: 'estimated' | 'osrm'
+  places: 'none' | 'overpass'
   generatedAt: string
   model?: string
 }
@@ -80,4 +81,6 @@ export type HealthResponse = {
   ok: true
   llm: boolean
   routing: 'osrm'
+  places: 'overpass'
+  database: boolean
 }
