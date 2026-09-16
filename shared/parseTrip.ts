@@ -33,7 +33,7 @@ const CITY_ALIASES: Array<{ pattern: RegExp; city: string; region: RouteRegion }
 
 const THEME_RULES: Array<{ pattern: RegExp; theme: string; regionHint?: RouteRegion }> = [
   { pattern: /\b(hills?|mountains?|peaks?|scenic drives?|elevation)\b/i, theme: 'hills', regionHint: 'rockies' },
-  { pattern: /\b(coast|ocean|beach|pacific|highway 1|pch)\b/i, theme: 'coast', regionHint: 'pacific_coast' },
+  { pattern: /\b(coastal|coasts?|ocean|beach|pacific|highway 1|pch)\b/i, theme: 'coast', regionHint: 'pacific_coast' },
   { pattern: /\b(desert|canyon|red rock|mesa)\b/i, theme: 'desert', regionHint: 'southwest' },
   { pattern: /\b(wine|vineyard|napa|sonoma)\b/i, theme: 'wine', regionHint: 'pacific_coast' },
   { pattern: /\b(national parks?|parks?|hiking|trail)\b/i, theme: 'parks' },

@@ -1,6 +1,15 @@
-import { useEffect, useRef, useState, useTransition } from 'react'
-import { formatTotalDrive, generateTripPlan } from './lib/generateItinerary'
+import { useEffect, useRef, useState } from 'react'
+import { fetchHealth, generatePlan } from './lib/api'
+import {
+  clearShareHash,
+  encodeShareUrl,
+  listSavedTrips,
+  readSharedPlan,
+  saveTrip,
+  type SavedTrip,
+} from './lib/storage'
 import type { ItineraryDay, TripPlan } from './lib/types'
+import { formatTotalDrive } from './lib/generateItinerary'
 import './App.css'
 
 const EXAMPLE =
@@ -37,7 +46,9 @@ function DayPanel({ day, open, onToggle }: { day: ItineraryDay; open: boolean; o
         </div>
         <div className="day__drive">
           <span className="day__drive-time">{day.driveLabel}</span>
-          <span className="day__drive-label">driving</span>
+          <span className="day__drive-label">
+            {day.driveMiles ? `${day.driveMiles} mi · ` : ''}driving
+          </span>
         </div>
         <span className="day__chevron" aria-hidden="true" />
       </button>
@@ -73,13 +84,29 @@ function DayPanel({ day, open, onToggle }: { day: ItineraryDay; open: boolean; o
 }
 
 export default function App() {
-  const [notes, setNotes] = useState('')
-  const [plan, setPlan] = useState<TripPlan | null>(null)
+  const [notes, setNotes] = useState(() => readSharedPlan()?.intent.raw ?? '')
+  const [plan, setPlan] = useState<TripPlan | null>(() => readSharedPlan())
   const [openDay, setOpenDay] = useState(1)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isPending, startTransition] = useTransition()
+  const [status, setStatus] = useState('Checking routing…')
+  const [saved, setSaved] = useState<SavedTrip[]>(() => listSavedTrips())
+  const [toast, setToast] = useState<string | null>(null)
   const resultsRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    void fetchHealth().then((health) => {
+      if (!health) {
+        setStatus('Offline mode · local planner')
+        return
+      }
+      setStatus(
+        health.llm
+          ? 'Live routing · AI planning on'
+          : 'Live routing on · add OPENAI_API_KEY for AI planning',
+      )
+    })
+  }, [])
 
   useEffect(() => {
     if (plan && resultsRef.current) {
@@ -87,7 +114,13 @@ export default function App() {
     }
   }, [plan])
 
-  function handleGenerate() {
+  useEffect(() => {
+    if (!toast) return
+    const t = window.setTimeout(() => setToast(null), 2600)
+    return () => window.clearTimeout(t)
+  }, [toast])
+
+  async function handleGenerate() {
     const text = notes.trim()
     if (text.length < 8) {
       setError('Drop a few more details—days, vibes, food, where you want to start.')
@@ -95,17 +128,36 @@ export default function App() {
     }
     setError(null)
     setGenerating(true)
-    window.setTimeout(() => {
-      startTransition(() => {
-        const next = generateTripPlan(text)
-        setPlan(next)
-        setOpenDay(1)
-        setGenerating(false)
-      })
-    }, 620)
+    try {
+      const next = await generatePlan(text)
+      setPlan(next)
+      setOpenDay(1)
+      clearShareHash()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Generation failed')
+    } finally {
+      setGenerating(false)
+    }
   }
 
-  const busy = generating || isPending
+  function handleSave() {
+    if (!plan) return
+    setSaved(saveTrip(plan))
+    setToast('Trip saved on this device')
+  }
+
+  async function handleShare() {
+    if (!plan) return
+    const url = encodeShareUrl(plan)
+    try {
+      await navigator.clipboard.writeText(url)
+      setToast('Share link copied')
+    } catch {
+      setToast(url)
+    }
+  }
+
+  const busy = generating
 
   return (
     <div className={`app ${plan ? 'app--planned' : ''}`}>
@@ -113,18 +165,24 @@ export default function App() {
         <a className="brand brand--nav" href="#top">
           TripPlanner
         </a>
-        {plan ? (
-          <button
-            type="button"
-            className="ghost-btn"
-            onClick={() => {
-              setPlan(null)
-              window.scrollTo({ top: 0, behavior: 'smooth' })
-            }}
-          >
-            New trip
-          </button>
-        ) : null}
+        <div className="topbar__actions">
+          <span className="status-pill" title="Generation backend status">
+            {status}
+          </span>
+          {plan ? (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                setPlan(null)
+                clearShareHash()
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+              }}
+            >
+              New trip
+            </button>
+          ) : null}
+        </div>
       </header>
 
       <main>
@@ -139,7 +197,7 @@ export default function App() {
             <p className="brand brand--hero">TripPlanner</p>
             <h1>Paste the mess. Drive the plan.</h1>
             <p className="hero__lede">
-              Dump your rough notes—days, vibes, food quirks—and get a day-by-day route with drive times and map links.
+              Dump your rough notes—days, vibes, food quirks—and get a day-by-day route with live drive times and map links.
             </p>
 
             <div className={`composer ${busy ? 'composer--busy' : ''}`}>
@@ -172,12 +230,8 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <button type="button" className="generate" onClick={handleGenerate} disabled={busy}>
-                  {busy ? (
-                    <span className="generate__pulse">Plotting route…</span>
-                  ) : (
-                    'Generate'
-                  )}
+                <button type="button" className="generate" onClick={() => void handleGenerate()} disabled={busy}>
+                  {busy ? <span className="generate__pulse">Plotting route…</span> : 'Generate'}
                 </button>
               </div>
               {error ? <p className="composer__error">{error}</p> : null}
@@ -188,9 +242,21 @@ export default function App() {
         {plan ? (
           <section className="results" ref={resultsRef} aria-live="polite">
             <div className="results__intro">
-              <p className="eyebrow">Your itinerary</p>
-              <h2>{plan.title}</h2>
-              <p className="results__sub">{plan.subtitle}</p>
+              <div className="results__heading">
+                <div>
+                  <p className="eyebrow">Your itinerary</p>
+                  <h2>{plan.title}</h2>
+                  <p className="results__sub">{plan.subtitle}</p>
+                </div>
+                <div className="plan-actions">
+                  <button type="button" className="text-btn" onClick={handleSave}>
+                    Save
+                  </button>
+                  <button type="button" className="text-btn" onClick={() => void handleShare()}>
+                    Copy share link
+                  </button>
+                </div>
+              </div>
               <dl className="stats">
                 <div>
                   <dt>Days</dt>
@@ -203,6 +269,13 @@ export default function App() {
                 <div>
                   <dt>Food lens</dt>
                   <dd>{plan.intent.food === 'any' ? 'Flexible' : plan.intent.food}</dd>
+                </div>
+                <div>
+                  <dt>Engine</dt>
+                  <dd>
+                    {plan.meta.engine === 'llm' ? 'AI' : 'Smart parser'}
+                    {plan.meta.routing === 'osrm' ? ' · live ETA' : ''}
+                  </dd>
                 </div>
               </dl>
             </div>
@@ -226,13 +299,42 @@ export default function App() {
                 ))}
               </ul>
             </aside>
+
+            {saved.length ? (
+              <aside className="saved">
+                <h3>Saved on this device</h3>
+                <ul>
+                  {saved.slice(0, 5).map((item) => (
+                    <li key={item.plan.id}>
+                      <button
+                        type="button"
+                        className="saved__item"
+                        onClick={() => {
+                          setPlan(item.plan)
+                          setNotes(item.plan.intent.raw)
+                          setOpenDay(1)
+                        }}
+                      >
+                        <strong>{item.plan.title}</strong>
+                        <span>{new Date(item.savedAt).toLocaleString()}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+            ) : null}
           </section>
         ) : null}
       </main>
 
       <footer className="footer">
-        <p>TripPlanner turns unstructured notes into a structured driving itinerary—no tab juggling required.</p>
+        <p>
+          TripPlanner turns unstructured notes into a structured driving itinerary—with live OpenStreetMap drive times
+          {status.includes('AI') ? ' and optional OpenAI planning' : ''}.
+        </p>
       </footer>
+
+      {toast ? <div className="toast">{toast}</div> : null}
     </div>
   )
 }
