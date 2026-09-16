@@ -85,7 +85,18 @@ body {
 .brand--nav {
   font-size: 1rem;
   color: rgba(243, 247, 242, 0.92);
-  mix-blend-mode: difference;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.45);
+}
+
+.app--planned .brand--nav {
+  color: var(--ink);
+  text-shadow: none;
+}
+
+.app--planned .ghost-btn {
+  border-color: rgba(19, 32, 24, 0.18);
+  background: rgba(243, 247, 242, 0.9);
+  color: var(--ink);
 }
 
 .ghost-btn {
@@ -104,6 +115,11 @@ body {
 .ghost-btn:hover {
   background: rgba(19, 32, 24, 0.55);
   border-color: rgba(243, 247, 242, 0.55);
+}
+
+.app--planned .ghost-btn:hover {
+  background: rgba(19, 32, 24, 0.06);
+  border-color: rgba(19, 32, 24, 0.28);
 }
 
 .hero {

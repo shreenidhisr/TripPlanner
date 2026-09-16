@@ -108,7 +108,7 @@ export default function App() {
   const busy = generating || isPending
 
   return (
-    <div className="app">
+    <div className={`app ${plan ? 'app--planned' : ''}`}>
       <header className="topbar">
         <a className="brand brand--nav" href="#top">
           TripPlanner
