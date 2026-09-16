@@ -2,18 +2,23 @@ import type { FoodPreference, RouteRegion, TripIntent } from './types'
 
 const CITY_ALIASES: Array<{ pattern: RegExp; city: string; region: RouteRegion }> = [
   { pattern: /\b(san francisco|sf|bay area)\b/i, city: 'San Francisco, CA', region: 'pacific_coast' },
-  { pattern: /\b(los angeles|l\.?a\.?|la)\b/i, city: 'Los Angeles, CA', region: 'pacific_coast' },
+  { pattern: /\b(los angeles|l\.a\.)\b/i, city: 'Los Angeles, CA', region: 'pacific_coast' },
   { pattern: /\b(san diego)\b/i, city: 'San Diego, CA', region: 'pacific_coast' },
   { pattern: /\b(seattle|puget)\b/i, city: 'Seattle, WA', region: 'pacific_coast' },
   { pattern: /\b(portland)\b/i, city: 'Portland, OR', region: 'pacific_coast' },
   { pattern: /\b(denver)\b/i, city: 'Denver, CO', region: 'rockies' },
-  { pattern: /\b(aspen|boulder)\b/i, city: 'Boulder, CO', region: 'rockies' },
-  { pattern: /\b(salt lake|moab|utah)\b/i, city: 'Salt Lake City, UT', region: 'southwest' },
-  { pattern: /\b(phoenix|scottsdale|arizona)\b/i, city: 'Phoenix, AZ', region: 'southwest' },
-  { pattern: /\b(santa fe|albuquerque|new mexico)\b/i, city: 'Santa Fe, NM', region: 'southwest' },
+  { pattern: /\b(boulder)\b/i, city: 'Boulder, CO', region: 'rockies' },
+  { pattern: /\b(aspen)\b/i, city: 'Aspen, CO', region: 'rockies' },
+  { pattern: /\b(salt lake)\b/i, city: 'Salt Lake City, UT', region: 'southwest' },
+  { pattern: /\b(moab)\b/i, city: 'Moab, UT', region: 'southwest' },
+  { pattern: /\b(phoenix|scottsdale)\b/i, city: 'Phoenix, AZ', region: 'southwest' },
+  { pattern: /\b(arizona)\b/i, city: 'Phoenix, AZ', region: 'southwest' },
+  { pattern: /\b(santa fe)\b/i, city: 'Santa Fe, NM', region: 'southwest' },
+  { pattern: /\b(albuquerque|new mexico)\b/i, city: 'Albuquerque, NM', region: 'southwest' },
   { pattern: /\b(austin|texas hill)\b/i, city: 'Austin, TX', region: 'southwest' },
   { pattern: /\b(nashville)\b/i, city: 'Nashville, TN', region: 'southeast' },
-  { pattern: /\b(asheville|smoky|blue ridge)\b/i, city: 'Asheville, NC', region: 'southeast' },
+  { pattern: /\b(asheville|blue ridge)\b/i, city: 'Asheville, NC', region: 'southeast' },
+  { pattern: /\b(smoky)\b/i, city: 'Great Smoky Mountains NP, TN', region: 'southeast' },
   { pattern: /\b(miami|florida keys|keys)\b/i, city: 'Miami, FL', region: 'southeast' },
   { pattern: /\b(new orleans|nola)\b/i, city: 'New Orleans, LA', region: 'southeast' },
   { pattern: /\b(boston)\b/i, city: 'Boston, MA', region: 'northeast' },
@@ -23,6 +28,7 @@ const CITY_ALIASES: Array<{ pattern: RegExp; city: string; region: RouteRegion }
   { pattern: /\b(yosemite)\b/i, city: 'Yosemite Valley, CA', region: 'pacific_coast' },
   { pattern: /\b(grand canyon)\b/i, city: 'Grand Canyon Village, AZ', region: 'southwest' },
   { pattern: /\b(yellowstone)\b/i, city: 'Yellowstone NP, WY', region: 'rockies' },
+  { pattern: /\butah\b/i, city: 'Salt Lake City, UT', region: 'southwest' },
 ]
 
 const THEME_RULES: Array<{ pattern: RegExp; theme: string; regionHint?: RouteRegion }> = [
@@ -65,12 +71,35 @@ function extractFood(text: string): FoodPreference {
 }
 
 function extractCities(text: string): { cities: string[]; region: RouteRegion } {
+  const matches: Array<{ city: string; region: RouteRegion; index: number }> = []
+
+  for (const entry of CITY_ALIASES) {
+    const flags = entry.pattern.flags.includes('g')
+      ? entry.pattern.flags
+      : `${entry.pattern.flags}g`
+    const re = new RegExp(entry.pattern.source, flags)
+    for (const m of text.matchAll(re)) {
+      matches.push({ city: entry.city, region: entry.region, index: m.index ?? 0 })
+    }
+  }
+
+  // Standalone "LA" for Los Angeles, but not the Louisiana state abbrev after a comma.
+  for (const m of text.matchAll(/(?<!,\s*)\bLA\b/g)) {
+    matches.push({
+      city: 'Los Angeles, CA',
+      region: 'pacific_coast',
+      index: m.index ?? 0,
+    })
+  }
+
+  matches.sort((a, b) => a.index - b.index)
+
   const found: string[] = []
   let region: RouteRegion = 'generic'
-  for (const entry of CITY_ALIASES) {
-    if (entry.pattern.test(text) && !found.includes(entry.city)) {
-      found.push(entry.city)
-      if (region === 'generic') region = entry.region
+  for (const match of matches) {
+    if (!found.includes(match.city)) {
+      found.push(match.city)
+      if (region === 'generic') region = match.region
     }
   }
   return { cities: found, region }

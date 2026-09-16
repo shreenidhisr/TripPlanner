@@ -163,7 +163,10 @@ export default function App() {
                       className="chip"
                       role="listitem"
                       disabled={busy}
-                      onClick={() => setNotes(ex)}
+                      onClick={() => {
+                        setNotes(ex)
+                        setError(null)
+                      }}
                     >
                       {i === 0 ? 'Hills · vegetarian' : i === 1 ? 'Coastal weekend' : 'Desert week'}
                     </button>

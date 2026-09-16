@@ -32,6 +32,7 @@ const ROUTES: Record<RouteRegion, Waypoint[]> = {
     { name: 'Page, AZ', vibe: 'Slot canyon country', activity: 'Lake Powell overlook' },
     { name: 'Monument Valley, UT', vibe: 'Iconic mesas', activity: 'Valley Drive viewpoints' },
     { name: 'Moab, UT', vibe: 'Arches gateway', activity: 'Delicate Arch trailhead' },
+    { name: 'Canyonlands NP, UT', vibe: 'Island in the Sky', activity: 'Mesa Arch overlook' },
   ],
   rockies: [
     { name: 'Denver, CO', vibe: 'Mile-high launch', activity: 'Early departure toward the Front Range' },
@@ -149,35 +150,60 @@ function pickWaypoints(intent: TripIntent): Waypoint[] {
     }
   }
   if (intent.endCity && intent.endCity !== intent.startCity) {
-    const last = pool[pool.length - 1]
-    if (!last.name.toLowerCase().includes(intent.endCity.split(',')[0].toLowerCase())) {
-      pool[pool.length - 1] = {
-        name: intent.endCity,
-        vibe: 'Your finish line',
-        activity: 'Arrive with buffer for dinner',
-      }
+    const endKey = intent.endCity.split(',')[0].toLowerCase()
+    const endIdx = pool.findIndex((w) => w.name.toLowerCase().includes(endKey))
+    if (endIdx > 0) {
+      return pool.slice(0, endIdx + 1)
+    }
+    pool[pool.length - 1] = {
+      name: intent.endCity,
+      vibe: 'Your finish line',
+      activity: 'Arrive with buffer for dinner',
     }
   }
   return pool
 }
 
 function sampleRoute(waypoints: Waypoint[], days: number): Waypoint[] {
-  if (waypoints.length <= days + 1) return waypoints
-  const result: Waypoint[] = [waypoints[0]]
-  const middle = waypoints.slice(1, -1)
-  const need = days - 1
-  const step = middle.length / Math.max(need, 1)
-  for (let i = 0; i < need; i++) {
-    const idx = Math.min(middle.length - 1, Math.floor(i * step + step / 2))
-    const wp = middle[idx]
-    if (result[result.length - 1].name !== wp.name) result.push(wp)
+  const needed = days + 1
+  if (waypoints.length === 0) {
+    return Array.from({ length: needed }, (_, i) => ({
+      name: 'Open road',
+      vibe: i === 0 ? 'Flexible start' : 'Flexible corridor',
+      activity: 'Follow the scenic pull-offs',
+    }))
   }
-  const end = waypoints[waypoints.length - 1]
-  if (result[result.length - 1].name !== end.name) result.push(end)
-  while (result.length < days + 1) {
-    result.splice(result.length - 1, 0, middle[Math.min(middle.length - 1, result.length - 1)])
+
+  const stay = (wp: Waypoint): Waypoint => ({
+    name: wp.name,
+    vibe: `Extra day around ${wp.name.split(',')[0]}`,
+    activity: 'Linger for a longer hike or town wander before pushing on',
+  })
+
+  if (waypoints.length >= needed) {
+    const picked: Waypoint[] = []
+    for (let i = 0; i < needed; i++) {
+      const idx = Math.round((i * (waypoints.length - 1)) / Math.max(needed - 1, 1))
+      const wp = waypoints[idx]
+      if (picked.length && picked[picked.length - 1].name === wp.name) {
+        picked.push(stay(wp))
+      } else {
+        picked.push(wp)
+      }
+    }
+    return picked
   }
-  return result.slice(0, days + 1)
+
+  const result = [...waypoints]
+  let missing = needed - result.length
+  let cursor = 1
+  while (missing > 0) {
+    const at = Math.min(Math.max(cursor, 1), result.length - 1)
+    result.splice(at, 0, stay(result[at]))
+    missing -= 1
+    cursor = Math.min(at + 2, result.length - 1)
+  }
+  return result
 }
 
 function foodLabel(food: FoodPreference, dayIndex: number): string {
@@ -306,9 +332,12 @@ export function generateTripPlan(raw: string): TripPlan {
   const days: ItineraryDay[] = []
 
   for (let i = 0; i < intent.days; i++) {
-    const from = waypoints[Math.min(i, waypoints.length - 2)]
-    const to = waypoints[Math.min(i + 1, waypoints.length - 1)]
-    const driveMinutes = estimateDrive(i, intent.themes)
+    const from = waypoints[i]
+    const to = waypoints[i + 1]
+    const samePlace = from.name === to.name
+    const driveMinutes = samePlace
+      ? Math.max(45, Math.round(estimateDrive(i, intent.themes) * 0.35))
+      : estimateDrive(i, intent.themes)
     days.push(buildDay(i + 1, from, to, intent, driveMinutes))
   }
 
