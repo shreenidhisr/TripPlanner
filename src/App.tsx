@@ -1,13 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   fetchCloudTrips,
   fetchHealth,
   fetchMe,
+  fetchNearby,
+  fetchSettings,
   generatePlan,
   login,
   logout,
   register,
   saveCloudTrip,
+  saveSettings,
   type AuthUser,
   type CloudTrip,
 } from './lib/api'
@@ -19,30 +22,47 @@ import {
   saveTrip,
   type SavedTrip,
 } from './lib/storage'
-import type { ItineraryDay, TripPlan } from './lib/types'
+import type { ItineraryDay, LlmProvider, NearbyDestination, TravelMode, TripPlan, UserSettingsPublic } from './lib/types'
 import { formatTotalDrive } from './lib/generateItinerary'
 import './App.css'
 
 const EXAMPLE =
-  'Driving for 5 days, need to hit the hills, prefer vegetarian food stops along the highway. Starting near Denver if that works.'
+  '3-day trip from Mumbai toward the hills, prefer vegetarian food, mix of cafes and viewpoints.'
 
 const EXAMPLES = [
   EXAMPLE,
-  'Weekend coastal run from SF toward Big Sur. Seafood ok. Keep it scenic and not too rushed.',
-  'Week-long desert trip—Phoenix through Sedona and Grand Canyon. Local food, lots of overlooks.',
+  'Weekend train trip Delhi to Jaipur and Agra. Heritage forts, local food.',
+  'Bike ride Bengaluru to Mysuru and Coorg for 4 days. Slow pace, coffee estates.',
+]
+
+const MODES: Array<{ id: TravelMode; label: string }> = [
+  { id: 'car', label: 'Car' },
+  { id: 'bike', label: 'Bike' },
+  { id: 'bus', label: 'Bus' },
+  { id: 'train', label: 'Train' },
+]
+
+const PROVIDERS: Array<{ id: LlmProvider; label: string; placeholder: string }> = [
+  { id: 'openai', label: 'OpenAI', placeholder: 'sk-...' },
+  { id: 'anthropic', label: 'Anthropic', placeholder: 'sk-ant-...' },
+  { id: 'gemini', label: 'Google Gemini', placeholder: 'AIza...' },
+  { id: 'groq', label: 'Groq', placeholder: 'gsk_...' },
+  { id: 'openrouter', label: 'OpenRouter', placeholder: 'sk-or-...' },
 ]
 
 function StopIcon({ type }: { type: string }) {
   const label =
     type === 'drive'
       ? '→'
-      : type === 'food'
-        ? '◉'
-        : type === 'lodging'
-          ? '⌂'
-          : type === 'sight'
-            ? '◈'
-            : '✦'
+      : type === 'transit'
+        ? '⇄'
+        : type === 'food'
+          ? '◉'
+          : type === 'lodging'
+            ? '⌂'
+            : type === 'sight'
+              ? '◈'
+              : '✦'
   return <span className="stop-icon" aria-hidden="true">{label}</span>
 }
 
@@ -53,19 +73,23 @@ function DayPanel({ day, open, onToggle }: { day: ItineraryDay; open: boolean; o
         <div className="day__badge">Day {day.day}</div>
         <div className="day__meta">
           <h3>{day.title}</h3>
-          <p>{day.summary}</p>
+          <p>
+            {day.summary}
+            {day.transitHint ? ` · ${day.transitHint}` : ''}
+          </p>
         </div>
         <div className="day__drive">
           <span className="day__drive-time">{day.driveLabel}</span>
           <span className="day__drive-label">
-            {day.driveMiles ? `${day.driveMiles} mi · ` : ''}driving
+            {day.driveMiles ? `${day.driveMiles} mi · ` : ''}
+            {day.mode}
           </span>
         </div>
         <span className="day__chevron" aria-hidden="true" />
       </button>
       <div className="day__body" hidden={!open}>
         <a className="map-link map-link--day" href={day.mapUrl} target="_blank" rel="noreferrer">
-          Open day’s route in Google Maps
+          {day.mode === 'train' || day.mode === 'bus' ? 'Open booking / route link' : 'Open day’s route in Google Maps'}
         </a>
         <ol className="stops">
           {day.stops.map((stop) => (
@@ -83,6 +107,11 @@ function DayPanel({ day, open, onToggle }: { day: ItineraryDay; open: boolean; o
                 {stop.mapUrl ? (
                   <a className="map-link" href={stop.mapUrl} target="_blank" rel="noreferrer">
                     Map
+                  </a>
+                ) : null}
+                {stop.bookingUrl ? (
+                  <a className="map-link" href={stop.bookingUrl} target="_blank" rel="noreferrer">
+                    Book
                   </a>
                 ) : null}
               </div>
@@ -105,7 +134,15 @@ export default function App() {
   const [cloudTrips, setCloudTrips] = useState<CloudTrip[]>([])
   const [user, setUser] = useState<AuthUser | null>(null)
   const [database, setDatabase] = useState(false)
+  const [mode, setMode] = useState<TravelMode>('car')
+  const [location, setLocation] = useState<{ lat: number; lon: number; label?: string } | null>(null)
+  const [nearby, setNearby] = useState<NearbyDestination[]>([])
+  const [destinationHint, setDestinationHint] = useState<string | null>(null)
+  const [locating, setLocating] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settings, setSettings] = useState<UserSettingsPublic | null>(null)
+  const [keyDrafts, setKeyDrafts] = useState<Partial<Record<LlmProvider, string>>>({})
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
@@ -124,14 +161,16 @@ export default function App() {
         setStatus('Offline mode · local planner')
         return
       }
-      const bits = ['Live routing']
-      if (health.places) bits.push('OSM places')
+      const bits = ['India focus', 'Live routing', 'OSM places']
       if (health.database) bits.push('Postgres')
-      bits.push(health.llm ? 'AI on' : 'add OPENAI_API_KEY for AI')
+      bits.push(me.user ? 'Bring your own LLM key' : 'Sign in to add LLM keys')
       setStatus(bits.join(' · '))
       if (me.user) {
         try {
           setCloudTrips(await fetchCloudTrips())
+          const s = await fetchSettings()
+          setSettings(s)
+          setMode(s.preferredMode)
         } catch {
           // ignore
         }
@@ -151,6 +190,36 @@ export default function App() {
     return () => window.clearTimeout(t)
   }, [toast])
 
+  useEffect(() => {
+    if (!location) return
+    void fetchNearby({ lat: location.lat, lon: location.lon, mode })
+      .then(setNearby)
+      .catch(() => setNearby([]))
+  }, [location, mode])
+
+  async function handleLocate() {
+    if (!navigator.geolocation) {
+      setToast('Geolocation not supported in this browser')
+      return
+    }
+    setLocating(true)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocation({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+        })
+        setLocating(false)
+        setToast('Location captured · nearby India destinations loaded')
+      },
+      () => {
+        setLocating(false)
+        setToast('Could not read location · allow location access and retry')
+      },
+      { enableHighAccuracy: true, timeout: 12000 },
+    )
+  }
+
   async function handleGenerate() {
     const text = notes.trim()
     if (text.length < 8) {
@@ -160,10 +229,16 @@ export default function App() {
     setError(null)
     setGenerating(true)
     try {
-      const next = await generatePlan(text)
+      const next = await generatePlan({
+        notes: text,
+        mode,
+        location: location ?? undefined,
+        destinationHint: destinationHint ?? undefined,
+      })
       setPlan(next)
       setOpenDay(1)
       clearShareHash()
+      if (next.nearbySuggestions?.length) setNearby(next.nearbySuggestions)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Generation failed')
     } finally {
@@ -199,7 +274,7 @@ export default function App() {
     }
   }
 
-  async function handleAuthSubmit(e: React.FormEvent) {
+  async function handleAuthSubmit(e: FormEvent) {
     e.preventDefault()
     setAuthBusy(true)
     setAuthError(null)
@@ -211,6 +286,9 @@ export default function App() {
       setUser(next)
       setAuthOpen(false)
       setCloudTrips(await fetchCloudTrips())
+      const s = await fetchSettings()
+      setSettings(s)
+      setMode(s.preferredMode)
       setToast(authMode === 'login' ? 'Signed in' : 'Account created')
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'Auth failed')
@@ -223,7 +301,33 @@ export default function App() {
     await logout()
     setUser(null)
     setCloudTrips([])
+    setSettings(null)
     setToast('Signed out')
+  }
+
+  async function handleSettingsSave(e: FormEvent) {
+    e.preventDefault()
+    if (!settings) return
+    try {
+      const next = await saveSettings({
+        preferredProvider: settings.preferredProvider,
+        preferredModel: settings.preferredModel,
+        preferredMode: settings.preferredMode,
+        homeCity: settings.homeCity,
+        keys: keyDrafts,
+      })
+      setSettings(next)
+      setKeyDrafts({})
+      setMode(next.preferredMode)
+      setSettingsOpen(false)
+      setToast(
+        next.configuredProviders.length
+          ? `Saved · ${next.configuredProviders.join(', ')} ready`
+          : 'Settings saved',
+      )
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Could not save settings')
+    }
   }
 
   const busy = generating
@@ -239,9 +343,14 @@ export default function App() {
             {status}
           </span>
           {user ? (
-            <button type="button" className="ghost-btn" onClick={() => void handleLogout()}>
-              {user.name || user.email}
-            </button>
+            <>
+              <button type="button" className="ghost-btn" onClick={() => setSettingsOpen(true)}>
+                LLM keys
+              </button>
+              <button type="button" className="ghost-btn" onClick={() => void handleLogout()}>
+                {user.name || user.email}
+              </button>
+            </>
           ) : database ? (
             <button
               type="button"
@@ -282,11 +391,55 @@ export default function App() {
             <p className="brand brand--hero">TripPlanner</p>
             <h1>Paste the mess. Drive the plan.</h1>
             <p className="hero__lede">
-              Dump your rough notes—days, vibes, food quirks—and get a day-by-day route with live drive times, real food
-              stops, and Postgres-backed saves.
+              India-first itineraries for car, bike, bus, and train—use your own LLM keys, current location, and nearby
+              popular destinations.
             </p>
 
             <div className={`composer ${busy ? 'composer--busy' : ''}`}>
+              <div className="mode-row" role="group" aria-label="Travel mode">
+                {MODES.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className={`mode-chip ${mode === m.id ? 'mode-chip--active' : ''}`}
+                    onClick={() => setMode(m.id)}
+                    disabled={busy}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+                <button type="button" className="mode-chip" onClick={() => void handleLocate()} disabled={busy || locating}>
+                  {locating ? 'Locating…' : location ? 'Location on' : 'Use my location'}
+                </button>
+              </div>
+
+              {nearby.length ? (
+                <div className="nearby">
+                  <p className="nearby__label">Nearby popular destinations</p>
+                  <div className="chips" role="list">
+                    {nearby.map((place) => (
+                      <button
+                        key={`${place.name}-${place.state}`}
+                        type="button"
+                        className={`chip ${destinationHint === place.name ? 'chip--active' : ''}`}
+                        role="listitem"
+                        disabled={busy}
+                        onClick={() => {
+                          setDestinationHint(place.name)
+                          setNotes((prev) =>
+                            prev.includes(place.name)
+                              ? prev
+                              : `${prev.trim()}${prev.trim() ? ' ' : ''}Want to hit ${place.name} (${place.distanceKm} km, ${place.vibe}).`,
+                          )
+                        }}
+                      >
+                        {place.name} · {place.distanceKm} km
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               <label className="sr-only" htmlFor="brain-dump">
                 Trip notes
               </label>
@@ -310,9 +463,12 @@ export default function App() {
                       onClick={() => {
                         setNotes(ex)
                         setError(null)
+                        if (i === 1) setMode('train')
+                        if (i === 2) setMode('bike')
+                        if (i === 0) setMode('car')
                       }}
                     >
-                      {i === 0 ? 'Hills · vegetarian' : i === 1 ? 'Coastal weekend' : 'Desert week'}
+                      {i === 0 ? 'Mumbai hills' : i === 1 ? 'Delhi rail circuit' : 'Bike to Coorg'}
                     </button>
                   ))}
                 </div>
@@ -321,6 +477,9 @@ export default function App() {
                 </button>
               </div>
               {error ? <p className="composer__error">{error}</p> : null}
+              {!user && database ? (
+                <p className="composer__hint">Sign in and add your OpenAI / Gemini / Groq key to plan with your favourite LLM.</p>
+              ) : null}
             </div>
           </div>
         </section>
@@ -349,18 +508,21 @@ export default function App() {
                   <dd>{plan.days.length}</dd>
                 </div>
                 <div>
-                  <dt>Total drive</dt>
+                  <dt>Total time</dt>
                   <dd>{formatTotalDrive(plan.totalDriveMinutes)}</dd>
                 </div>
                 <div>
-                  <dt>Food lens</dt>
-                  <dd>{plan.intent.food === 'any' ? 'Flexible' : plan.intent.food}</dd>
+                  <dt>Mode</dt>
+                  <dd>{plan.meta.mode}</dd>
                 </div>
                 <div>
                   <dt>Engine</dt>
                   <dd>
-                    {plan.meta.engine === 'llm' ? 'AI' : 'Smart parser'}
+                    {plan.meta.engine === 'llm'
+                      ? `${plan.meta.provider || 'AI'}${plan.meta.model ? ` · ${plan.meta.model}` : ''}`
+                      : 'Smart parser'}
                     {plan.meta.routing === 'osrm' ? ' · live ETA' : ''}
+                    {plan.meta.routing === 'transit' ? ' · transit' : ''}
                     {plan.meta.places === 'overpass' ? ' · places' : ''}
                   </dd>
                 </div>
@@ -399,6 +561,7 @@ export default function App() {
                         onClick={() => {
                           setPlan(item.plan)
                           setNotes(item.plan.intent.raw)
+                          setMode(item.plan.intent.mode || 'car')
                           setOpenDay(1)
                         }}
                       >
@@ -423,6 +586,7 @@ export default function App() {
                         onClick={() => {
                           setPlan(item.plan)
                           setNotes(item.plan.intent.raw)
+                          setMode(item.plan.intent.mode || 'car')
                           setOpenDay(1)
                         }}
                       >
@@ -440,7 +604,8 @@ export default function App() {
 
       <footer className="footer">
         <p>
-          TripPlanner uses live OpenStreetMap routing, Overpass places, and PostgreSQL for accounts and trip history.
+          TripPlanner is India-first: BYO LLM keys, geolocation suggestions, OSRM road times, and IRCTC/redBus booking
+          deep-links for train and bus modes.
         </p>
       </footer>
 
@@ -448,7 +613,7 @@ export default function App() {
         <div className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
           <form className="auth-card" onSubmit={(e) => void handleAuthSubmit(e)}>
             <h2 id="auth-title">{authMode === 'login' ? 'Sign in' : 'Create account'}</h2>
-            <p>Accounts and trips are stored in PostgreSQL.</p>
+            <p>Accounts, trips, and encrypted LLM keys live in PostgreSQL.</p>
             {authMode === 'register' ? (
               <label>
                 Name
@@ -490,6 +655,77 @@ export default function App() {
               </button>
               <button type="submit" className="generate" disabled={authBusy}>
                 {authBusy ? 'Working…' : authMode === 'login' ? 'Sign in' : 'Create account'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {settingsOpen && settings ? (
+        <div className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+          <form className="auth-card auth-card--wide" onSubmit={(e) => void handleSettingsSave(e)}>
+            <h2 id="settings-title">Your LLM keys</h2>
+            <p>Keys are encrypted at rest in Postgres. Only you can use them for planning.</p>
+            <label>
+              Preferred provider
+              <select
+                value={settings.preferredProvider}
+                onChange={(e) =>
+                  setSettings({ ...settings, preferredProvider: e.target.value as LlmProvider })
+                }
+              >
+                {PROVIDERS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                    {settings.configuredProviders.includes(p.id) ? ' · configured' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Model
+              <input
+                value={settings.preferredModel}
+                onChange={(e) => setSettings({ ...settings, preferredModel: e.target.value })}
+                placeholder="gpt-4o-mini / gemini-2.0-flash / ..."
+              />
+            </label>
+            <label>
+              Default mode
+              <select
+                value={settings.preferredMode}
+                onChange={(e) =>
+                  setSettings({ ...settings, preferredMode: e.target.value as TravelMode })
+                }
+              >
+                {MODES.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {PROVIDERS.map((p) => (
+              <label key={p.id}>
+                {p.label} API key
+                <input
+                  type="password"
+                  value={
+                    keyDrafts[p.id] ??
+                    (settings.configuredProviders.includes(p.id) ? '••••••••••••' : '')
+                  }
+                  placeholder={p.placeholder}
+                  onChange={(e) => setKeyDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                  autoComplete="off"
+                />
+              </label>
+            ))}
+            <div className="auth-actions">
+              <button type="button" className="text-btn" onClick={() => setSettingsOpen(false)}>
+                Cancel
+              </button>
+              <button type="submit" className="generate">
+                Save keys
               </button>
             </div>
           </form>

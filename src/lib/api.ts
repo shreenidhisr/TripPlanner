@@ -1,4 +1,13 @@
-import type { GenerateResponse, HealthResponse, TripPlan } from '../../shared/types'
+import type {
+  GenerateRequest,
+  GenerateResponse,
+  HealthResponse,
+  LlmProvider,
+  NearbyDestination,
+  TravelMode,
+  TripPlan,
+  UserSettingsPublic,
+} from '../../shared/types'
 import { generateHeuristicPlan } from '../../shared/heuristicPlan'
 
 export type AuthUser = {
@@ -37,26 +46,39 @@ export async function fetchHealth(): Promise<HealthResponse | null> {
   }
 }
 
-export async function generatePlanFromApi(notes: string): Promise<TripPlan> {
+export async function fetchNearby(opts: {
+  lat: number
+  lon: number
+  mode: TravelMode
+}): Promise<NearbyDestination[]> {
+  const url = `/api/nearby?lat=${opts.lat}&lon=${opts.lon}&mode=${opts.mode}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(await readError(res, 'Could not load nearby destinations'))
+  const data = (await res.json()) as { destinations: NearbyDestination[] }
+  return data.destinations
+}
+
+export async function generatePlanFromApi(input: GenerateRequest): Promise<TripPlan> {
   const res = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ notes }),
+    body: JSON.stringify(input),
   })
-
   if (!res.ok) throw new Error(await readError(res, 'Could not generate itinerary'))
   const data = (await res.json()) as GenerateResponse
   return data.plan
 }
 
-/** Prefer API (live OSRM + places + optional LLM). Fall back to local heuristic offline. */
-export async function generatePlan(notes: string): Promise<TripPlan> {
+export async function generatePlan(input: GenerateRequest): Promise<TripPlan> {
   try {
-    return await generatePlanFromApi(notes)
+    return await generatePlanFromApi(input)
   } catch (err) {
     console.warn('API generate failed, using local heuristic', err)
-    return generateHeuristicPlan(notes)
+    return generateHeuristicPlan(input.notes, {
+      mode: input.mode,
+      startOverride: input.location?.label,
+    })
   }
 }
 
@@ -119,4 +141,29 @@ export async function saveCloudTrip(plan: TripPlan): Promise<CloudTrip> {
   if (!res.ok) throw new Error(await readError(res, 'Could not save trip'))
   const data = (await res.json()) as { trip: CloudTrip }
   return data.trip
+}
+
+export async function fetchSettings(): Promise<UserSettingsPublic> {
+  const res = await fetch('/api/settings', { credentials: 'include' })
+  if (!res.ok) throw new Error(await readError(res, 'Could not load settings'))
+  const data = (await res.json()) as { settings: UserSettingsPublic }
+  return data.settings
+}
+
+export async function saveSettings(input: {
+  preferredProvider?: LlmProvider
+  preferredModel?: string
+  preferredMode?: TravelMode
+  homeCity?: string | null
+  keys?: Partial<Record<LlmProvider, string>>
+}): Promise<UserSettingsPublic> {
+  const res = await fetch('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) throw new Error(await readError(res, 'Could not save settings'))
+  const data = (await res.json()) as { settings: UserSettingsPublic }
+  return data.settings
 }

@@ -5,6 +5,10 @@ export type FoodPreference =
   | 'local'
   | 'any'
 
+export type TravelMode = 'car' | 'bike' | 'bus' | 'train'
+
+export type LlmProvider = 'openai' | 'anthropic' | 'gemini' | 'groq' | 'openrouter'
+
 export type RouteRegion =
   | 'pacific_coast'
   | 'southwest'
@@ -12,6 +16,11 @@ export type RouteRegion =
   | 'northeast'
   | 'southeast'
   | 'midwest'
+  | 'north_india'
+  | 'west_india'
+  | 'south_india'
+  | 'east_india'
+  | 'himalayas'
   | 'generic'
 
 export type TripIntent = {
@@ -22,9 +31,10 @@ export type TripIntent = {
   food: FoodPreference
   raw: string
   region: RouteRegion
+  mode: TravelMode
 }
 
-export type StopType = 'drive' | 'sight' | 'food' | 'lodging' | 'activity'
+export type StopType = 'drive' | 'sight' | 'food' | 'lodging' | 'activity' | 'transit'
 
 export type ItineraryStop = {
   id: string
@@ -34,6 +44,7 @@ export type ItineraryStop = {
   type: StopType
   durationMinutes?: number
   mapUrl?: string
+  bookingUrl?: string
 }
 
 export type ItineraryDay = {
@@ -46,15 +57,19 @@ export type ItineraryDay = {
   from: string
   to: string
   mapUrl: string
+  mode: TravelMode
   stops: ItineraryStop[]
+  transitHint?: string
 }
 
 export type PlanMeta = {
   engine: 'heuristic' | 'llm'
-  routing: 'estimated' | 'osrm'
+  routing: 'estimated' | 'osrm' | 'transit'
   places: 'none' | 'overpass'
   generatedAt: string
   model?: string
+  provider?: LlmProvider
+  mode: TravelMode
 }
 
 export type TripPlan = {
@@ -67,10 +82,24 @@ export type TripPlan = {
   days: ItineraryDay[]
   tips: string[]
   meta: PlanMeta
+  nearbySuggestions?: NearbyDestination[]
+}
+
+export type NearbyDestination = {
+  name: string
+  state: string
+  vibe: string
+  distanceKm: number
+  lat: number
+  lon: number
+  bestModes: TravelMode[]
 }
 
 export type GenerateRequest = {
   notes: string
+  mode?: TravelMode
+  location?: { lat: number; lon: number; label?: string }
+  destinationHint?: string
 }
 
 export type GenerateResponse = {
@@ -83,4 +112,13 @@ export type HealthResponse = {
   routing: 'osrm'
   places: 'overpass'
   database: boolean
+  regionFocus: 'india'
+}
+
+export type UserSettingsPublic = {
+  preferredProvider: LlmProvider
+  preferredModel: string
+  preferredMode: TravelMode
+  configuredProviders: LlmProvider[]
+  homeCity?: string | null
 }

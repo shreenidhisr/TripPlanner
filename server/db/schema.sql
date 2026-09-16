@@ -33,3 +33,13 @@ CREATE TABLE IF NOT EXISTS trips (
 
 CREATE INDEX IF NOT EXISTS trips_user_id_idx ON trips(user_id);
 CREATE INDEX IF NOT EXISTS trips_updated_at_idx ON trips(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  preferred_provider TEXT NOT NULL DEFAULT 'openai',
+  preferred_model TEXT NOT NULL DEFAULT 'gpt-4o-mini',
+  preferred_mode TEXT NOT NULL DEFAULT 'car',
+  home_city TEXT,
+  encrypted_keys TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

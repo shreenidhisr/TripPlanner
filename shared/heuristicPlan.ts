@@ -4,6 +4,7 @@ import type {
   FoodPreference,
   ItineraryDay,
   ItineraryStop,
+  TravelMode,
   TripIntent,
   TripPlan,
 } from './types'
@@ -157,11 +158,19 @@ function dayTitle(from: string, to: string, themes: string[]): string {
   return `${short(from)} → ${short(to)}`
 }
 
-function estimateDrive(dayIndex: number, themes: string[], samePlace: boolean): number {
-  if (samePlace) return 45
+function estimateDrive(
+  dayIndex: number,
+  themes: string[],
+  samePlace: boolean,
+  mode: TravelMode,
+): number {
+  if (samePlace) return mode === 'bike' ? 60 : 45
   let base = 150 + (dayIndex % 3) * 25
+  if (mode === 'bike') base = Math.round(base * 0.7)
+  if (mode === 'bus') base = Math.round(base * 1.15)
+  if (mode === 'train') base = Math.round(base * 1.05)
   if (themes.includes('slow')) base = Math.round(base * 0.75)
-  if (themes.includes('hills')) base += 20
+  if (themes.includes('hills')) base += mode === 'bike' ? 35 : 20
   if (themes.includes('coast')) base += 15
   return base
 }
@@ -246,7 +255,7 @@ export function buildDay(
     day,
     title: dayTitle(from.name, to.name, intent.themes),
     summary: samePlace
-      ? `${to.vibe}—a deeper look without packing the car twice.`
+      ? `${to.vibe}—a deeper look without packing twice.`
       : `${from.vibe} into ${to.vibe.toLowerCase()}.`,
     driveMinutes,
     driveMiles,
@@ -254,28 +263,37 @@ export function buildDay(
     from: from.name,
     to: to.name,
     mapUrl: mapsDirections(from.name, to.name),
+    mode: intent.mode,
     stops,
   }
 }
 
-function buildTips(intent: TripIntent, routing: 'estimated' | 'osrm'): string[] {
-  const tips = [
-    'Pack a cooler—highway food stops are better when you already have snacks.',
-    'Start each morning by 8:30 to keep daylight for the scenic legs.',
-  ]
+function buildTips(
+  intent: TripIntent,
+  routing: TripPlan['meta']['routing'],
+): string[] {
+  const tips: string[] = []
+  if (intent.mode === 'train') {
+    tips.push('Check live berths on IRCTC; keep a ConfirmTkt / RailYatri backup tab open.')
+  } else if (intent.mode === 'bus') {
+    tips.push('Compare redBus / AbhiBus for Volvo sleeper timings before you lock hotels.')
+  } else if (intent.mode === 'bike') {
+    tips.push('Keep daily riding under ~300 km in the hills and hydrate every fuel stop.')
+  } else {
+    tips.push('Start each morning by 8:30 to keep daylight for scenic highway legs.')
+  }
   if (intent.food === 'vegetarian' || intent.food === 'vegan') {
-    tips.push('Lunch stops are tuned for plant-forward options along the corridor.')
+    tips.push('Lunch stops prefer pure-veg / plant-forward kitchens along the corridor.')
   }
   if (intent.themes.includes('hills')) {
-    tips.push('Expect slower climbs—build buffer into afternoon arrivals.')
-  }
-  if (intent.themes.includes('coast')) {
-    tips.push('Coastal fog can slow mornings; keep sunglasses and a layer handy.')
+    tips.push('Build buffer for mountain roads—fog and truck climbs slow afternoons.')
   }
   tips.push(
     routing === 'osrm'
-      ? 'Drive times come from live OpenStreetMap routing (OSRM).'
-      : 'Drive times are estimates—connect the API for live OSRM routing.',
+      ? 'Road times use live OpenStreetMap routing (OSRM).'
+      : routing === 'transit'
+        ? 'Transit legs use curated IRCTC / bus corridor data plus booking deep-links.'
+        : 'Times are estimates until live routing is available.',
   )
   return tips.slice(0, 4)
 }
@@ -288,8 +306,11 @@ export type DraftPlan = {
   subtitle: string
 }
 
-export function buildDraftPlan(raw: string): DraftPlan {
-  const intent = parseTripIntent(raw)
+export function buildDraftPlan(
+  raw: string,
+  opts?: { mode?: TravelMode; startOverride?: string },
+): DraftPlan {
+  const intent = parseTripIntent(raw, opts)
   const waypoints = sampleRoute(pickWaypoints(intent), intent.days)
   const days: ItineraryDay[] = []
 
@@ -297,23 +318,41 @@ export function buildDraftPlan(raw: string): DraftPlan {
     const from = waypoints[i]
     const to = waypoints[i + 1]
     const samePlace = from.name === to.name
-    days.push(buildDay(i + 1, from, to, intent, estimateDrive(i, intent.themes, samePlace)))
+    days.push(
+      buildDay(
+        i + 1,
+        from,
+        to,
+        intent,
+        estimateDrive(i, intent.themes, samePlace, intent.mode),
+      ),
+    )
   }
 
+  const modeWord =
+    intent.mode === 'train'
+      ? 'rail trip'
+      : intent.mode === 'bus'
+        ? 'bus trip'
+        : intent.mode === 'bike'
+          ? 'bike ride'
+          : 'drive'
   const themeBit = intent.themes.includes('hills')
     ? 'through the hills'
     : intent.themes.includes('coast')
       ? 'along the coast'
       : intent.themes.includes('desert')
         ? 'across desert country'
-        : 'on open roads'
+        : intent.themes.includes('heritage')
+          ? 'through heritage towns'
+          : 'across India'
 
   return {
     intent,
     waypoints,
     days,
-    title: `${intent.days}-day drive ${themeBit}`,
-    subtitle: `From ${intent.startCity.split(',')[0]}${intent.endCity ? ` to ${intent.endCity.split(',')[0]}` : ''} · structured from your notes`,
+    title: `${intent.days}-day ${modeWord} ${themeBit}`,
+    subtitle: `From ${intent.startCity.split(',')[0]}${intent.endCity ? ` to ${intent.endCity.split(',')[0]}` : ''} · ${intent.mode} · structured from your notes`,
   }
 }
 
@@ -340,13 +379,17 @@ export function finalizePlan(
   }
 }
 
-export function generateHeuristicPlan(raw: string): TripPlan {
-  const draft = buildDraftPlan(raw)
+export function generateHeuristicPlan(
+  raw: string,
+  opts?: { mode?: TravelMode; startOverride?: string },
+): TripPlan {
+  const draft = buildDraftPlan(raw, opts)
   return finalizePlan(draft, {
     engine: 'heuristic',
     routing: 'estimated',
     places: 'none',
     generatedAt: new Date().toISOString(),
+    mode: draft.intent.mode,
   })
 }
 

@@ -15,9 +15,11 @@ import {
   userFromToken,
 } from './db/auth'
 import { closeDb, dbConfigured, migrate } from './db/client'
+import { getUserSettings, upsertUserSettings } from './db/settings'
 import { generatePlan } from './generate'
 import { llmConfigured } from './llm'
-import type { TripPlan } from '../shared/types'
+import { nearbyIndiaDestinations } from '../shared/india'
+import type { GenerateRequest, LlmProvider, TravelMode, TripPlan } from '../shared/types'
 
 const app = new Hono()
 const port = Number(process.env.PORT || 8787)
@@ -48,11 +50,24 @@ app.get('/api/health', (c) =>
     routing: 'osrm' as const,
     places: 'overpass' as const,
     database: dbConfigured(),
+    regionFocus: 'india' as const,
   }),
 )
 
+app.get('/api/nearby', (c) => {
+  const lat = Number(c.req.query('lat'))
+  const lon = Number(c.req.query('lon'))
+  const mode = (c.req.query('mode') as TravelMode | undefined) || 'car'
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return c.json({ error: 'lat and lon are required' }, 400)
+  }
+  return c.json({
+    destinations: nearbyIndiaDestinations(lat, lon, { mode, limit: 8 }),
+  })
+})
+
 app.post('/api/generate', async (c) => {
-  let body: { notes?: string }
+  let body: GenerateRequest
   try {
     body = await c.req.json()
   } catch {
@@ -65,7 +80,33 @@ app.post('/api/generate', async (c) => {
   }
 
   try {
-    const plan = await generatePlan(notes)
+    let credentials = null
+    if (dbConfigured()) {
+      const token = getCookie(c, SESSION_COOKIE)
+      const user = await userFromToken(token)
+      if (user) {
+        const settings = await getUserSettings(user.id)
+        const provider = settings.public.preferredProvider
+        const key = settings.keys[provider]
+        if (key) {
+          credentials = {
+            provider,
+            apiKey: key,
+            model: settings.public.preferredModel,
+          }
+        }
+      }
+    }
+
+    const plan = await generatePlan(
+      {
+        notes,
+        mode: body.mode,
+        location: body.location,
+        destinationHint: body.destinationHint,
+      },
+      { credentials },
+    )
     return c.json({ plan })
   } catch (err) {
     console.error('[api/generate]', err)
@@ -73,6 +114,35 @@ app.post('/api/generate', async (c) => {
       { error: err instanceof Error ? err.message : 'Failed to generate itinerary' },
       500,
     )
+  }
+})
+
+app.get('/api/settings', async (c) => {
+  if (!dbConfigured()) return c.json({ error: 'DATABASE_URL is not configured' }, 503)
+  const token = getCookie(c, SESSION_COOKIE)
+  const user = await userFromToken(token)
+  if (!user) return c.json({ error: 'Sign in required' }, 401)
+  const settings = await getUserSettings(user.id)
+  return c.json({ settings: settings.public })
+})
+
+app.put('/api/settings', async (c) => {
+  if (!dbConfigured()) return c.json({ error: 'DATABASE_URL is not configured' }, 503)
+  const token = getCookie(c, SESSION_COOKIE)
+  const user = await userFromToken(token)
+  if (!user) return c.json({ error: 'Sign in required' }, 401)
+  try {
+    const body = await c.req.json<{
+      preferredProvider?: LlmProvider
+      preferredModel?: string
+      preferredMode?: TravelMode
+      homeCity?: string | null
+      keys?: Partial<Record<LlmProvider, string>>
+    }>()
+    const settings = await upsertUserSettings(user.id, body)
+    return c.json({ settings })
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'Could not save settings' }, 400)
   }
 })
 

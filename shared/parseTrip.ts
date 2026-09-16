@@ -1,43 +1,48 @@
-import type { FoodPreference, RouteRegion, TripIntent } from './types'
+import type { FoodPreference, RouteRegion, TravelMode, TripIntent } from './types'
 
 const CITY_ALIASES: Array<{ pattern: RegExp; city: string; region: RouteRegion }> = [
-  { pattern: /\b(san francisco|sf|bay area)\b/i, city: 'San Francisco, CA', region: 'pacific_coast' },
-  { pattern: /\b(los angeles|l\.a\.)\b/i, city: 'Los Angeles, CA', region: 'pacific_coast' },
-  { pattern: /\b(san diego)\b/i, city: 'San Diego, CA', region: 'pacific_coast' },
-  { pattern: /\b(seattle|puget)\b/i, city: 'Seattle, WA', region: 'pacific_coast' },
-  { pattern: /\b(portland)\b/i, city: 'Portland, OR', region: 'pacific_coast' },
+  { pattern: /\b(mumbai|bombay)\b/i, city: 'Mumbai, MH', region: 'west_india' },
+  { pattern: /\b(pune|poona)\b/i, city: 'Pune, MH', region: 'west_india' },
+  { pattern: /\b(goa|panaji|panjim)\b/i, city: 'Goa, GA', region: 'west_india' },
+  { pattern: /\b(lonavala|lonavla)\b/i, city: 'Lonavala, MH', region: 'west_india' },
+  { pattern: /\b(nashik|nasik)\b/i, city: 'Nashik, MH', region: 'west_india' },
+  { pattern: /\b(ahmedabad|amdavad)\b/i, city: 'Ahmedabad, GJ', region: 'west_india' },
+  { pattern: /\b(delhi|new delhi|ndls)\b/i, city: 'Delhi, DL', region: 'north_india' },
+  { pattern: /\b(agra)\b/i, city: 'Agra, UP', region: 'north_india' },
+  { pattern: /\b(jaipur)\b/i, city: 'Jaipur, RJ', region: 'north_india' },
+  { pattern: /\b(udaipur)\b/i, city: 'Udaipur, RJ', region: 'north_india' },
+  { pattern: /\b(jodhpur)\b/i, city: 'Jodhpur, RJ', region: 'north_india' },
+  { pattern: /\b(rishikesh)\b/i, city: 'Rishikesh, UK', region: 'himalayas' },
+  { pattern: /\b(manali)\b/i, city: 'Manali, HP', region: 'himalayas' },
+  { pattern: /\b(shimla)\b/i, city: 'Shimla, HP', region: 'himalayas' },
+  { pattern: /\b(amritsar)\b/i, city: 'Amritsar, PB', region: 'north_india' },
+  { pattern: /\b(varanasi|banaras|benaras)\b/i, city: 'Varanasi, UP', region: 'east_india' },
+  { pattern: /\b(lucknow)\b/i, city: 'Lucknow, UP', region: 'north_india' },
+  { pattern: /\b(kolkata|calcutta)\b/i, city: 'Kolkata, WB', region: 'east_india' },
+  { pattern: /\b(darjeeling)\b/i, city: 'Darjeeling, WB', region: 'east_india' },
+  { pattern: /\b(bengaluru|bangalore)\b/i, city: 'Bengaluru, KA', region: 'south_india' },
+  { pattern: /\b(mysuru|mysore)\b/i, city: 'Mysuru, KA', region: 'south_india' },
+  { pattern: /\b(chennai|madras)\b/i, city: 'Chennai, TN', region: 'south_india' },
+  { pattern: /\b(pondicherry|puducherry)\b/i, city: 'Pondicherry, PY', region: 'south_india' },
+  { pattern: /\b(madurai)\b/i, city: 'Madurai, TN', region: 'south_india' },
+  { pattern: /\b(kochi|cochin|ernakulam)\b/i, city: 'Kochi, KL', region: 'south_india' },
+  { pattern: /\b(munnar)\b/i, city: 'Munnar, KL', region: 'south_india' },
+  { pattern: /\b(hyderabad)\b/i, city: 'Hyderabad, TS', region: 'south_india' },
+  { pattern: /\b(leh|ladakh)\b/i, city: 'Leh, LA', region: 'himalayas' },
+  { pattern: /\b(srinagar)\b/i, city: 'Srinagar, JK', region: 'himalayas' },
+  // keep a few US aliases for older demos
   { pattern: /\b(denver)\b/i, city: 'Denver, CO', region: 'rockies' },
-  { pattern: /\b(boulder)\b/i, city: 'Boulder, CO', region: 'rockies' },
-  { pattern: /\b(aspen)\b/i, city: 'Aspen, CO', region: 'rockies' },
-  { pattern: /\b(salt lake)\b/i, city: 'Salt Lake City, UT', region: 'southwest' },
-  { pattern: /\b(moab)\b/i, city: 'Moab, UT', region: 'southwest' },
-  { pattern: /\b(phoenix|scottsdale)\b/i, city: 'Phoenix, AZ', region: 'southwest' },
-  { pattern: /\b(arizona)\b/i, city: 'Phoenix, AZ', region: 'southwest' },
-  { pattern: /\b(santa fe)\b/i, city: 'Santa Fe, NM', region: 'southwest' },
-  { pattern: /\b(albuquerque|new mexico)\b/i, city: 'Albuquerque, NM', region: 'southwest' },
-  { pattern: /\b(austin|texas hill)\b/i, city: 'Austin, TX', region: 'southwest' },
-  { pattern: /\b(nashville)\b/i, city: 'Nashville, TN', region: 'southeast' },
-  { pattern: /\b(asheville|blue ridge)\b/i, city: 'Asheville, NC', region: 'southeast' },
-  { pattern: /\b(smoky)\b/i, city: 'Great Smoky Mountains NP, TN', region: 'southeast' },
-  { pattern: /\b(miami|florida keys|keys)\b/i, city: 'Miami, FL', region: 'southeast' },
-  { pattern: /\b(new orleans|nola)\b/i, city: 'New Orleans, LA', region: 'southeast' },
-  { pattern: /\b(boston)\b/i, city: 'Boston, MA', region: 'northeast' },
-  { pattern: /\b(new york|nyc|manhattan)\b/i, city: 'New York, NY', region: 'northeast' },
-  { pattern: /\b(chicago)\b/i, city: 'Chicago, IL', region: 'midwest' },
-  { pattern: /\b(big sur|monterey|carmel)\b/i, city: 'Monterey, CA', region: 'pacific_coast' },
-  { pattern: /\b(yosemite)\b/i, city: 'Yosemite Valley, CA', region: 'pacific_coast' },
-  { pattern: /\b(grand canyon)\b/i, city: 'Grand Canyon Village, AZ', region: 'southwest' },
-  { pattern: /\b(yellowstone)\b/i, city: 'Yellowstone NP, WY', region: 'rockies' },
-  { pattern: /\butah\b/i, city: 'Salt Lake City, UT', region: 'southwest' },
+  { pattern: /\b(san francisco|sf)\b/i, city: 'San Francisco, CA', region: 'pacific_coast' },
 ]
 
 const THEME_RULES: Array<{ pattern: RegExp; theme: string; regionHint?: RouteRegion }> = [
-  { pattern: /\b(hills?|mountains?|peaks?|scenic drives?|elevation)\b/i, theme: 'hills', regionHint: 'rockies' },
-  { pattern: /\b(coastal|coasts?|ocean|beach|pacific|highway 1|pch)\b/i, theme: 'coast', regionHint: 'pacific_coast' },
-  { pattern: /\b(desert|canyon|red rock|mesa)\b/i, theme: 'desert', regionHint: 'southwest' },
-  { pattern: /\b(wine|vineyard|napa|sonoma)\b/i, theme: 'wine', regionHint: 'pacific_coast' },
-  { pattern: /\b(national parks?|parks?|hiking|trail)\b/i, theme: 'parks' },
-  { pattern: /\b(foodie|restaurants?|eats|cuisine)\b/i, theme: 'food' },
+  { pattern: /\b(hills?|mountains?|ghats?|peaks?)\b/i, theme: 'hills', regionHint: 'himalayas' },
+  { pattern: /\b(himalaya|manali|shimla|ladakh)\b/i, theme: 'hills', regionHint: 'himalayas' },
+  { pattern: /\b(beach|coast|konkan|goa)\b/i, theme: 'coast', regionHint: 'west_india' },
+  { pattern: /\b(desert|thar|rajasthan)\b/i, theme: 'desert', regionHint: 'north_india' },
+  { pattern: /\b(temple|heritage|fort|palace)\b/i, theme: 'heritage', regionHint: 'north_india' },
+  { pattern: /\b(backwater|kerala)\b/i, theme: 'coast', regionHint: 'south_india' },
+  { pattern: /\b(foodie|restaurants?|eats|cuisine|thali)\b/i, theme: 'food' },
   { pattern: /\b(family|kids|child)\b/i, theme: 'family' },
   { pattern: /\b(relax|chill|slow|leisurely)\b/i, theme: 'slow' },
   { pattern: /\b(photo|views?|overlook|sunset)\b/i, theme: 'views' },
@@ -64,36 +69,30 @@ function extractDays(text: string): number {
 
 function extractFood(text: string): FoodPreference {
   if (/\bvegan\b/i.test(text)) return 'vegan'
-  if (/\bvegetarian|veggie|plant[- ]based\b/i.test(text)) return 'vegetarian'
-  if (/\bseafood|fish|oyster|sushi\b/i.test(text)) return 'seafood'
-  if (/\blocal|farm[- ]to[- ]table|regional\b/i.test(text)) return 'local'
+  if (/\bvegetarian|veggie|plant[- ]based|jain\b/i.test(text)) return 'vegetarian'
+  if (/\bseafood|fish|prawn|crab\b/i.test(text)) return 'seafood'
+  if (/\blocal|thali|street food|regional\b/i.test(text)) return 'local'
   return 'any'
+}
+
+function extractMode(text: string, fallback: TravelMode = 'car'): TravelMode {
+  if (/\b(train|irctc|rail|shatabdi|rajdhani|express)\b/i.test(text)) return 'train'
+  if (/\b(bus|volvo|redbus|sleeper bus)\b/i.test(text)) return 'bus'
+  if (/\b(bike|motorcycle|scooter|activa|royal enfield)\b/i.test(text)) return 'bike'
+  if (/\b(car|self drive|road trip|driving)\b/i.test(text)) return 'car'
+  return fallback
 }
 
 function extractCities(text: string): { cities: string[]; region: RouteRegion } {
   const matches: Array<{ city: string; region: RouteRegion; index: number }> = []
-
   for (const entry of CITY_ALIASES) {
-    const flags = entry.pattern.flags.includes('g')
-      ? entry.pattern.flags
-      : `${entry.pattern.flags}g`
+    const flags = entry.pattern.flags.includes('g') ? entry.pattern.flags : `${entry.pattern.flags}g`
     const re = new RegExp(entry.pattern.source, flags)
     for (const m of text.matchAll(re)) {
       matches.push({ city: entry.city, region: entry.region, index: m.index ?? 0 })
     }
   }
-
-  // Standalone "LA" for Los Angeles, but not the Louisiana state abbrev after a comma.
-  for (const m of text.matchAll(/(?<!,\s*)\bLA\b/g)) {
-    matches.push({
-      city: 'Los Angeles, CA',
-      region: 'pacific_coast',
-      index: m.index ?? 0,
-    })
-  }
-
   matches.sort((a, b) => a.index - b.index)
-
   const found: string[] = []
   let region: RouteRegion = 'generic'
   for (const match of matches) {
@@ -120,6 +119,16 @@ function extractThemes(text: string): { themes: string[]; regionHint: RouteRegio
 
 function defaultStartForRegion(region: RouteRegion): string {
   switch (region) {
+    case 'north_india':
+      return 'Delhi, DL'
+    case 'west_india':
+      return 'Mumbai, MH'
+    case 'south_india':
+      return 'Bengaluru, KA'
+    case 'east_india':
+      return 'Kolkata, WB'
+    case 'himalayas':
+      return 'Delhi, DL'
     case 'pacific_coast':
       return 'San Francisco, CA'
     case 'southwest':
@@ -133,24 +142,29 @@ function defaultStartForRegion(region: RouteRegion): string {
     case 'midwest':
       return 'Chicago, IL'
     default:
-      return 'Denver, CO'
+      return 'Mumbai, MH'
   }
 }
 
-export function parseTripIntent(raw: string): TripIntent {
+export function parseTripIntent(
+  raw: string,
+  opts?: { mode?: TravelMode; startOverride?: string },
+): TripIntent {
   const text = raw.trim()
   const days = extractDays(text)
   const food = extractFood(text)
+  const mode = opts?.mode ?? extractMode(text, 'car')
   const { cities, region: cityRegion } = extractCities(text)
   const { themes, regionHint } = extractThemes(text)
 
   let region = cityRegion
   if (region === 'generic' && regionHint) region = regionHint
-  if (region === 'generic' && themes.includes('hills')) region = 'rockies'
-  if (region === 'generic' && themes.includes('coast')) region = 'pacific_coast'
-  if (region === 'generic' && themes.includes('desert')) region = 'southwest'
+  if (region === 'generic' && themes.includes('hills')) region = 'himalayas'
+  if (region === 'generic' && themes.includes('coast')) region = 'west_india'
+  if (region === 'generic' && themes.includes('desert')) region = 'north_india'
+  if (region === 'generic') region = 'west_india'
 
-  const startCity = cities[0] ?? defaultStartForRegion(region)
+  const startCity = opts?.startOverride || cities[0] || defaultStartForRegion(region)
   const endCity = cities.length > 1 ? cities[cities.length - 1] : null
 
   return {
@@ -161,5 +175,6 @@ export function parseTripIntent(raw: string): TripIntent {
     food,
     raw: text,
     region,
+    mode,
   }
 }
