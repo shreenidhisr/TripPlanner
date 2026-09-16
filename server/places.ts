@@ -22,6 +22,16 @@ function cuisineFilter(food: FoodPreference): string | null {
   }
 }
 
+async function fetchWithTimeout(url: string, init: RequestInit, ms: number) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function findFoodPlaces(near: {
   lat: number
   lon: number
@@ -30,19 +40,19 @@ export async function findFoodPlaces(near: {
   if (!near.lat || !near.lon) return []
 
   const cuisine = cuisineFilter(near.food)
-  const radius = 4500
+  const radius = 3500
   const cuisineClause = cuisine
     ? `node["amenity"~"restaurant|cafe|fast_food"]["cuisine"~"${cuisine}",i](around:${radius},${near.lat},${near.lon});`
     : ''
 
   const query = `
-[out:json][timeout:20];
+[out:json][timeout:8];
 (
   ${cuisineClause}
   node["amenity"="restaurant"](around:${radius},${near.lat},${near.lon});
   node["amenity"="cafe"](around:${Math.round(radius * 0.7)},${near.lat},${near.lon});
 );
-out body 12;
+out body 8;
 `
 
   const endpoints = [
@@ -52,15 +62,19 @@ out body 12;
 
   for (const endpoint of endpoints) {
     try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-          Accept: 'application/json',
-          'User-Agent': 'TripPlanner/1.0 (road-trip builder)',
+      const res = await fetchWithTimeout(
+        endpoint,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            Accept: 'application/json',
+            'User-Agent': 'TripPlanner/1.0 (road-trip builder)',
+          },
+          body: `data=${encodeURIComponent(query)}`,
         },
-        body: `data=${encodeURIComponent(query)}`,
-      })
+        9000,
+      )
       if (!res.ok) continue
       const data = (await res.json()) as {
         elements?: Array<{
@@ -82,7 +96,7 @@ out body 12;
       }
       if (hits.length) return rankPlaces(hits, near.food)
     } catch {
-      // try next endpoint
+      // try next endpoint / fail soft
     }
   }
   return []
@@ -115,40 +129,48 @@ export async function enrichFoodStops(
   waypoints: Waypoint[],
   food: FoodPreference,
 ): Promise<{ days: ItineraryDay[]; placesFound: number }> {
-  let placesFound = 0
   const next = [...days]
-
-  for (let i = 0; i < next.length; i++) {
-    const dest = waypoints[i + 1] ?? waypoints[i]
-    if (!dest) continue
-    try {
-      const places = await findFoodPlaces({ lat: dest.lat, lon: dest.lon, food })
-      if (!places.length) continue
-      placesFound += 1
-      const pick = places[0]
-      const alt = places
-        .slice(1)
-        .map((p) => p.name)
-        .join(' · ')
-      next[i] = {
-        ...next[i],
-        stops: next[i].stops.map((stop) => {
-          if (stop.type !== 'food') return stop
-          return {
-            ...stop,
-            title: pick.name,
-            detail: [
-              pick.cuisine ? `${pick.cuisine.replace(/;/g, ', ')} near ${dest.name.split(',')[0]}` : `OpenStreetMap place near ${dest.name.split(',')[0]}`,
-              alt ? `Also nearby: ${alt}` : null,
-            ]
-              .filter(Boolean)
-              .join(' · '),
-            mapUrl: mapsPlace(`${pick.name} ${dest.name}`),
-          }
-        }),
+  const results = await Promise.all(
+    next.map(async (day, i) => {
+      const dest = waypoints[i + 1] ?? waypoints[i]
+      if (!dest?.lat || !dest?.lon) return { i, places: [] as PlaceHit[] }
+      try {
+        const places = await findFoodPlaces({ lat: dest.lat, lon: dest.lon, food })
+        return { i, places, dest }
+      } catch {
+        return { i, places: [] as PlaceHit[], dest }
       }
-    } catch {
-      // keep template food stop
+    }),
+  )
+
+  let placesFound = 0
+  for (const result of results) {
+    if (!result.places.length || !('dest' in result) || !result.dest) continue
+    placesFound += 1
+    const pick = result.places[0]
+    const alt = result.places
+      .slice(1)
+      .map((p) => p.name)
+      .join(' · ')
+    const dest = result.dest
+    next[result.i] = {
+      ...next[result.i],
+      stops: next[result.i].stops.map((stop) => {
+        if (stop.type !== 'food') return stop
+        return {
+          ...stop,
+          title: pick.name,
+          detail: [
+            pick.cuisine
+              ? `${pick.cuisine.replace(/;/g, ', ')} near ${dest.name.split(',')[0]}`
+              : `OpenStreetMap place near ${dest.name.split(',')[0]}`,
+            alt ? `Also nearby: ${alt}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+          mapUrl: mapsPlace(`${pick.name} ${dest.name}`),
+        }
+      }),
     }
   }
 

@@ -33,21 +33,27 @@ async function applyOsrmTimes(
   let usedOsrm = false
   const next = [...days]
 
+  const legs = await Promise.all(
+    next.map(async (_day, i) => {
+      const from = waypoints[i]
+      const to = waypoints[i + 1]
+      if (!from || !to) return null
+      try {
+        return await routeDrive(
+          { lat: from.lat, lon: from.lon },
+          { lat: to.lat, lon: to.lon },
+        )
+      } catch {
+        return null
+      }
+    }),
+  )
+
   for (let i = 0; i < next.length; i++) {
-    const from = waypoints[i]
-    const to = waypoints[i + 1]
-    if (!from || !to) continue
-    try {
-      const leg = await routeDrive(
-        { lat: from.lat, lon: from.lon },
-        { lat: to.lat, lon: to.lon },
-      )
-      if (!leg) continue
-      usedOsrm = true
-      next[i] = patchDrive(next[i], leg.minutes, Math.round(leg.miles))
-    } catch {
-      // keep estimate
-    }
+    const leg = legs[i]
+    if (!leg) continue
+    usedOsrm = true
+    next[i] = patchDrive(next[i], leg.minutes, Math.round(leg.miles))
   }
 
   return { days: next, routing: usedOsrm ? 'osrm' : 'estimated' }

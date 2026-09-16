@@ -34,6 +34,7 @@ export async function geocodePlace(name: string): Promise<LatLon | null> {
       'User-Agent': 'TripPlanner/1.0 (road-trip builder; contact=dev@tripplanner.local)',
       Accept: 'application/json',
     },
+    signal: AbortSignal.timeout(8000),
   })
   if (!res.ok) return null
   const data = (await res.json()) as Array<{ lat: string; lon: string }>
@@ -58,6 +59,7 @@ export async function routeDrive(from: LatLon, to: LatLon): Promise<DriveLeg | n
 
   const res = await fetch(url, {
     headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(8000),
   })
   if (!res.ok) return null
   const data = (await res.json()) as {
